@@ -52,14 +52,30 @@ class TelegramManager:
 
     @_ensure_connected
     def fetch_messages(
-            self, chat_identifier: str, message_processor: Optional[Callable[[Message], None]] = None,
-            error_handler: Optional[Callable[[Message], None]] = None,
-            min_id: Optional[int] = None
+        self,
+        chat_identifier: str,
+        message_processor: Optional[Callable[[Message], None]] = None,
+        error_handler: Optional[Callable[[Message], None]] = None,
+        min_id: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> Optional[list[Message]]:
-        """Fetch message history from a chat or channel."""
+        """
+        Fetch message history from a chat or channel.
+
+        - If `min_id` is provided, fetches all messages with ID > min_id.
+        - If `limit` is provided, fetches the latest `limit` messages.
+        - If both are None, fetches all messages (use with caution).
+        """
         chat_target = self._resolve_chat_identifier(chat_identifier)
+
         with self.client:
-            messages = self.client.iter_messages(chat_target, reverse=True, min_id=min_id or 0)
+            messages = self.client.iter_messages(
+                chat_target,
+                reverse=True if min_id else False,  # reverse only for full history after min_id
+                min_id=min_id or 0,
+                limit=limit
+            )
+
             if message_processor:
                 for message in messages:
                     try:

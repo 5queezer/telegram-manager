@@ -1,5 +1,4 @@
 import logging
-from typing import Callable
 
 import click
 from telethon.tl.types import Message
@@ -28,7 +27,8 @@ def cli():
     default=None,
     help="Minimum Telegram message ID to start fetching from (messages with smaller IDs will be skipped)."
 )
-def iterate(channel, min_id):
+@click.option('--limit', type=int, default=None, help="Fetch the last N messages (instead of using min-id)")
+def fetch(channel, min_id, limit):
     """
     Fetch historical messages from a Telegram chat or channel.
 
@@ -51,7 +51,8 @@ def iterate(channel, min_id):
         chat_identifier=channel,
         message_processor=message_processor,
         error_handler=error_handler,
-        min_id=min_id
+        min_id=min_id,
+        limit=limit,
     )
 
 
