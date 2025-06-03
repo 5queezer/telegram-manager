@@ -42,7 +42,8 @@ def fetch(channel, min_id, limit, verbose):
 
     def message_processor(msg: Message):
         if verbose:
-            print(f"🆔 {msg.id} 📅 {msg.date.strftime('%Y-%m-%d %H:%M')} 👤 {msg.sender.username} 💬 {msg.raw_text}")
+            print(
+                f"\033[90mID:\033[0m {msg.id}  \033[90mDate:\033[0m {msg.date.strftime('%Y-%m-%d %H:%M')}  \033[90mFrom:\033[0m @{getattr(msg.sender, 'username', 'Unknown')}  \033[90mText:\033[0m {msg.raw_text}")
         else:
             print(msg.message)
 
