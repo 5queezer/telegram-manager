@@ -14,12 +14,16 @@ requires-python = ">=3.7"
 dependencies = [
     "telethon>=1.40.0",
     "python-dotenv>=1.1.0",
-    "click>=8.2.1",
-    "pytest",
+    "click>=8.2.1"
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest"
 ]
 
 [project.scripts]
