@@ -1,22 +1,26 @@
 # TelegramManager
 
-A simple CLI and Python module to **fetch** or **listen** to Telegram messages from public channels or groups. Built with [Telethon](https://github.com/LonamiWebs/Telethon), with plug-and-play configuration support.
+A Python CLI tool and module for fetching and monitoring Telegram messages from public channels and groups. Built with Telethon for reliable Telegram API integration.
 
----
+## Installation
 
-## 📦 Installation
+Install TelegramManager using pip:
 
 ```bash
 pip install .
-# or for development
+```
+
+For development installation:
+
+```bash
 pip install -e .[dev]
 ```
 
----
+## Configuration
 
-## ⚙️ Configuration (Recommended)
+### Environment Configuration
 
-Create a `.env` file in your project root:
+Create a `.env` file in your project root directory:
 
 ```env
 TELEGRAM_API_ID=your_api_id
@@ -24,13 +28,11 @@ TELEGRAM_API_HASH=your_api_hash
 TELEGRAM_PHONE_NUMBER=+1234567890
 ```
 
-The default `TelegramManager()` uses this automatically via a `Config` wrapper.
+The default `TelegramManager()` constructor automatically loads these environment variables.
 
----
+### Manual Configuration
 
-## 🔐 Manual Credential Usage (Alternative)
-
-If you prefer not to use a `.env` file or `Config`, instantiate the class manually:
+For programmatic usage without environment files:
 
 ```python
 from telegram_manager.controller import TelegramManager
@@ -42,57 +44,48 @@ tg = TelegramManager(
 )
 ```
 
-This is useful for scripting, testing, or dynamic environments.
+## Command Line Interface
 
----
+The `tm` command provides two primary operations:
 
-## 🚀 CLI Usage
+### Fetch Messages
 
-Once installed, you can run the `tm` CLI command:
-
-### 🔍 Fetch Messages
+Retrieve historical messages from a channel or group:
 
 ```bash
 tm fetch <channel> [--min-id <id>] [--limit <n>]
 ```
 
-Example:
-
+**Example:**
 ```bash
 tm fetch @openai --limit 10
 ```
 
----
+### Listen for Messages
 
-### 👂 Listen for Messages
+Monitor channels for new messages in real-time:
 
 ```bash
 tm listen <channel>
 ```
 
-Example:
-
+**Example:**
 ```bash
 tm listen "Some Group Chat"
 ```
 
----
+## Python API
 
-## 🧩 Python Module Usage
-
-### 🔧 Initialization
+### Basic Usage
 
 ```python
 from telegram_manager import TelegramManager
 
-tg = TelegramManager()  # Uses .env Config automatically
+# Initialize with environment configuration
+tg = TelegramManager()
 ```
 
-Or manually, as described in the previous section.
-
----
-
-### 📥 Fetch Messages
+### Fetching Messages
 
 ```python
 tg.fetch_messages(
@@ -102,31 +95,32 @@ tg.fetch_messages(
 )
 ```
 
----
-
-### 📡 Listen for Live Messages
+### Real-time Message Monitoring
 
 ```python
 tg.listen("@somechannel", message_handler=lambda m: print(f"New: {m.message}"))
 ```
 
----
+## Supported Input Formats
 
-## 📝 Notes
+TelegramManager accepts multiple channel identifier formats:
 
-* Accepts URLs (`https://t.me/...`), usernames (`@...`), or dialog names.
-* A `session` file is created locally to persist login across runs.
-* First-time authentication may prompt for a verification code.
+- Telegram URLs: `https://t.me/channelname`
+- Username format: `@channelname`
+- Dialog names: `"Channel Display Name"`
 
----
+## Authentication
 
-## 👤 Author
+- Session files are created locally to maintain authentication across sessions
+- First-time usage requires verification code entry
+- Authentication state persists between program runs
 
-Christian Pojoni
-📧 [christian.pojoni@gmail.com](mailto:christian.pojoni@gmail.com)
+## Requirements
 
----
+- Python 3.7 or higher
+- Valid Telegram API credentials
+- Network connectivity for Telegram API access
 
-## 📄 License
+## License
 
-MIT
+MIT License
