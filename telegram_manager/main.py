@@ -65,7 +65,7 @@ def fetch(channel, min_id, limit, verbose):
     required=True,
     type=str
 )
-def listen(channel, verbose):
+def listen(channel):
     """
     Listen for new messages in a Telegram chat or channel.
 
