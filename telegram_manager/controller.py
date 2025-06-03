@@ -2,7 +2,6 @@ import logging
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy.exc import IntegrityError
 from telethon import events
 from telethon.sync import TelegramClient
 from telethon.tl.custom.dialog import Dialog
@@ -65,8 +64,6 @@ class TelegramManager:
                 for message in messages:
                     try:
                         message_processor(message)
-                    except IntegrityError:
-                        pass
                     except Exception as e:
                         if error_handler:
                             error_handler(message)
