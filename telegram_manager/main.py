@@ -28,7 +28,8 @@ def cli():
     help="Minimum Telegram message ID to start fetching from (messages with smaller IDs will be skipped)."
 )
 @click.option('--limit', type=int, default=None, help="Fetch the last N messages (instead of using min-id)")
-def fetch(channel, min_id, limit):
+@click.option('--verbose', is_flag=True, default=False, help="Verbose output")
+def fetch(channel, min_id, limit, verbose):
     """
     Fetch historical messages from a Telegram chat or channel.
 
@@ -36,13 +37,14 @@ def fetch(channel, min_id, limit):
     - A full URL like 'https://t.me/example'
     - A username like '@example'
     - A plain chat name that matches an existing dialog
-
-    This uses the _resolve_chat_identifier method internally.
     """
     tg = TelegramManager()
 
     def message_processor(msg: Message):
-        print(f"Message ID: {msg.id}, Content: {msg.message}")
+        if verbose:
+            print(f"🆔 {msg.id} 📅 {msg.date.strftime('%Y-%m-%d %H:%M')} 👤 {msg.sender.username} 💬 {msg.raw_text}")
+        else:
+            print(msg.message)
 
     def error_handler(msg: Message):
         print(f"Error processing message ID: {msg.id}")
@@ -63,7 +65,7 @@ def fetch(channel, min_id, limit):
     required=True,
     type=str
 )
-def listen(channel):
+def listen(channel, verbose):
     """
     Listen for new messages in a Telegram chat or channel.
 
@@ -71,8 +73,6 @@ def listen(channel):
     - A full URL like 'https://t.me/example'
     - A username like '@example'
     - A plain chat name that matches an existing dialog
-
-    This uses the _resolve_chat_identifier method internally.
     """
     tg = TelegramManager()
 
