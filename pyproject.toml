@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "TelegramManager"
+version = "0.1"
+description = "Simple Interface for Telegram read and listen"
+authors = [
+    {name = "Christian Pojoni", email = "christian.pojoni@gmail.com"}
+]
+license = "MIT"
+requires-python = ">=3.7"
+dependencies = [
+    "telethon>=1.40.0",
+    "python-dotenv>=1.1.0",
+    "click>=8.2.1",
+    "pytest",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+tm = "telegram_manager.main:cli"
