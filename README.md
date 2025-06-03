@@ -90,7 +90,7 @@ tg = TelegramManager()
 ```python
 tg.fetch_messages(
     chat_identifier="@somechannel",
-    message_processor=lambda m: print(m.id, m.text),
+    message_processor=lambda m: print(m.id, m.raw_text),
     limit=5
 )
 ```
