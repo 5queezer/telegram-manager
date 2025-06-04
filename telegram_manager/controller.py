@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
@@ -52,27 +53,30 @@ class TelegramManager:
 
     @_ensure_connected
     def fetch_messages(
-        self,
-        chat_identifier: str,
-        message_processor: Optional[Callable[[Message], None]] = None,
-        error_handler: Optional[Callable[[Message], None]] = None,
-        min_id: Optional[int] = None,
-        limit: Optional[int] = None,
+            self,
+            chat_identifier: str,
+            message_processor: Optional[Callable[[Message], None]] = None,
+            error_handler: Optional[Callable[[Message], None]] = None,
+            min_id: Optional[int] = None,
+            limit: Optional[int] = None,
+            since_date: Optional[datetime] = None,
     ) -> Optional[list[Message]]:
         """
         Fetch message history from a chat or channel.
 
         - If `min_id` is provided, fetches all messages with ID > min_id.
         - If `limit` is provided, fetches the latest `limit` messages.
-        - If both are None, fetches all messages (use with caution).
+        - If `since_date` is provided, fetches only messages newer than that.
+        - If none are provided, fetches all messages (use with caution).
         """
         chat_target = self._resolve_chat_identifier(chat_identifier)
 
         with self.client:
             messages = self.client.iter_messages(
                 chat_target,
-                reverse=True if min_id else False,  # reverse only for full history after min_id
+                reverse=True if (min_id or since_date) else False,
                 min_id=min_id or 0,
+                offset_date=since_date,
                 limit=limit
             )
 
