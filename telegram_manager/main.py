@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -32,19 +33,25 @@ def parse_relative_time_string(time_str: str) -> datetime:
     return now
 
 
-def print_verbose_message(msg: Message):
+def classify_media_type(msg: Message) -> str:
+    if msg.photo:
+        return 'Photo'
+    elif msg.document:
+        return 'Document'
+    elif msg.video:
+        return 'Video'
+    elif msg.raw_text:
+        return 'Text'
+    return 'Other'
+
+
+def format_message_verbose(msg: Message):
     local_date = msg.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
     utc_date = msg.date.strftime('%Y-%m-%d %H:%M:%S')
     sender = getattr(msg.sender, 'username', 'Unknown')
     sender_id = getattr(msg.sender, 'id', 'N/A')
     reply_to = getattr(msg, 'reply_to_msg_id', None)
-    media_type = 'Text'
-    if msg.photo:
-        media_type = 'Photo'
-    elif msg.document:
-        media_type = 'Document'
-    elif msg.video:
-        media_type = 'Video'
+    media_type = classify_media_type(msg)
 
     print()
     print(f"\033[90mID:       \033[0m {msg.id}")
@@ -54,6 +61,18 @@ def print_verbose_message(msg: Message):
     if reply_to:
         print(f"\033[90mReply to: \033[0m {reply_to}")
     print(f"\033[90mText:     \033[0m {msg.raw_text}")
+
+
+def format_message_json(msg: Message) -> str:
+    return json.dumps({
+        "id": msg.id,
+        "date_utc": msg.date.isoformat(),
+        "text": msg.raw_text,
+        "from_username": getattr(msg.sender, 'username', 'Unknown'),
+        "from_id": getattr(msg.sender, 'id', None),
+        "reply_to_msg_id": getattr(msg, 'reply_to_msg_id', None),
+        "media_type": classify_media_type(msg)
+    }, ensure_ascii=False)
 
 
 @click.group()
@@ -68,7 +87,9 @@ def cli():
 @click.option('--limit', type=int, default=None, help="Fetch the last N messages.")
 @click.option('--since', type=str, default=None, help="Fetch messages sent after a relative time like '1w 2d 30m'.")
 @click.option('--verbose', is_flag=True, default=False, help="Verbose output")
-def fetch(channel, min_id, limit, since, verbose):
+@click.option('--json', 'json_output', is_flag=True, default=False, help="Output messages as JSON.")
+@click.option('--search', type=str, default=None, help="Search string to filter messages containing specific text.")
+def fetch(channel, min_id, limit, since, verbose, json_output, search):
     """
     Fetch historical messages from a Telegram chat or channel.
 
@@ -106,19 +127,13 @@ def fetch(channel, min_id, limit, since, verbose):
         message_count += 1
         user_ids.add(getattr(msg.sender, 'id', 'N/A'))
 
-        if msg.photo:
-            type_counter["Photo"] += 1
-        elif msg.document:
-            type_counter["Document"] += 1
-        elif msg.video:
-            type_counter["Video"] += 1
-        elif msg.raw_text:
-            type_counter["Text"] += 1
-        else:
-            type_counter["Other"] += 1
+        media_type = classify_media_type(msg)
+        type_counter[media_type] += 1
 
-        if verbose:
-            print_verbose_message(msg)
+        if json_output:
+            print(format_message_json(msg))
+        elif verbose:
+            format_message_verbose(msg)
         else:
             print(msg.message)
 
@@ -135,6 +150,7 @@ def fetch(channel, min_id, limit, since, verbose):
         min_id=min_id,
         limit=limit,
         since_date=since_date,
+        search=search
     )
 
     if verbose:
@@ -143,8 +159,9 @@ def fetch(channel, min_id, limit, since, verbose):
             print(f"\033[90mSince:       \033[0m {since_date.astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"\033[90mMessages:    \033[0m {message_count}")
         print(f"\033[90mUsers:       \033[0m {len(user_ids)}")
-        print(f"\033[90mTypes:       \033[0m Text({type_counter['Text']}), Photo({type_counter['Photo']}), "
-              f"Doc({type_counter['Document']}), Video({type_counter['Video']}), Other({type_counter['Other']})")
+        print(f"\033[90mTypes:       \033[0m Text({type_counter['Text']}), "
+              f"Photo({type_counter['Photo']}), Doc({type_counter['Document']}), "
+              f"Video({type_counter['Video']}), Other({type_counter['Other']})")
         if found_min_id[0] is not None:
             print(f"\033[90mMin Msg ID:  \033[0m {found_min_id[0]}")
 

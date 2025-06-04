@@ -53,43 +53,57 @@ class TelegramManager:
 
     @_ensure_connected
     def fetch_messages(
-            self,
-            chat_identifier: str,
-            message_processor: Optional[Callable[[Message], None]] = None,
-            error_handler: Optional[Callable[[Message], None]] = None,
-            min_id: Optional[int] = None,
-            limit: Optional[int] = None,
-            since_date: Optional[datetime] = None,
+        self,
+        chat_identifier: str,
+        message_processor: Optional[Callable[[Message], None]] = None,
+        error_handler: Optional[Callable[[Message], None]] = None,
+        min_id: Optional[int] = None,
+        limit: Optional[int] = None,
+        since_date: Optional[datetime] = None,
+        search: Optional[str] = None,
     ) -> Optional[list[Message]]:
         """
         Fetch message history from a chat or channel.
 
-        - If `min_id` is provided, fetches all messages with ID > min_id.
-        - If `limit` is provided, fetches the latest `limit` messages.
-        - If `since_date` is provided, fetches only messages newer than that.
-        - If none are provided, fetches all messages (use with caution).
+        Supports filtering by min_id, date, limit, and search string.
+
+        NOTE: Telegram ignores `min_id` and `offset_date` when `search` is used.
+        This function performs post-filtering manually to support those.
         """
         chat_target = self._resolve_chat_identifier(chat_identifier)
 
         with self.client:
-            messages = self.client.iter_messages(
+            if search:
+                logger.warning("Telegram ignores min_id and since_date when using search. Filtering manually...")
+
+            messages_iter = self.client.iter_messages(
                 chat_target,
                 reverse=True if (min_id or since_date) else False,
-                min_id=min_id or 0,
-                offset_date=since_date,
-                limit=limit
+                limit=limit,
+                search=search
             )
 
-            if message_processor:
-                for message in messages:
-                    try:
+            filtered = []
+            for message in messages_iter:
+                try:
+                    if search:
+                        # Manual post-filtering
+                        if min_id and message.id <= min_id:
+                            continue
+                        if since_date and message.date < since_date:
+                            continue
+                    if message_processor:
                         message_processor(message)
-                    except Exception as e:
-                        if error_handler:
-                            error_handler(message)
-                        logger.error(e)
-            else:
-                return list(messages)
+                    else:
+                        filtered.append(message)
+                except Exception as e:
+                    if error_handler:
+                        error_handler(message)
+                    logger.error(e)
+
+            if not message_processor:
+                return filtered
+            return None
 
     @_ensure_connected
     def _get_chat_dialog(self, chat_name: str) -> Dialog:

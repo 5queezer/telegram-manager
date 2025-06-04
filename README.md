@@ -53,21 +53,30 @@ The `tm` command provides two primary operations:
 Retrieve historical messages from a channel or group:
 
 ```bash
-tm fetch <channel> [--min-id <id>] [--limit <n>] [--since <relative-time>] [--verbose]
+tm fetch <channel> [--min-id <id>] [--limit <n>] [--since <relative-time>] [--search <text>] [--json] [--verbose]
 ```
 
-Supported `--since` formats:
+**Options:**
 
-* mo : months (e.g. `1mo`)
-* w  : weeks  (e.g. `2w`)
-* d  : days   (e.g. `3d`)
-* h  : hours  (e.g. `4h`)
-* m  : minutes (e.g. `30m`)
+* `--min-id`: Minimum message ID to fetch from.
+* `--limit`: Maximum number of messages to retrieve.
+* `--since`: Filter messages newer than a relative time expression.
+* `--search`: Filter messages containing the given search string.
+* `--json`: Output each message in JSON format.
+* `--verbose`: Print detailed metadata per message.
 
-You can combine multiple units:
+**Supported `--since` formats:**
+
+* `mo`: months (e.g. `1mo`)
+* `w`: weeks (e.g. `2w`)
+* `d`: days (e.g. `3d`)
+* `h`: hours (e.g. `4h`)
+* `m`: minutes (e.g. `30m`)
+
+You can combine units:
 
 ```bash
-tm fetch @openai --since "1mo 2w 3d 4h 30m" --verbose
+tm fetch @openai --since "1mo 2w 3d 4h 30m" --search GPT --verbose
 ```
 
 ### Listen for Messages
@@ -86,11 +95,25 @@ tm listen "Some Group Chat"
 
 ## Verbose Mode
 
-When `--verbose` is enabled in `fetch`, additional message details are printed:
+When `--verbose` is enabled in `fetch`, each message will include:
 
-* ID, date (local + UTC), sender, type, reply info
-* Message text
-* Summary: total messages, user count, message types
+* Message ID
+* Date in local time and UTC
+* Sender username and ID
+* Message type (text, photo, document, video)
+* Reply-to message ID (if any)
+* Raw text content
+
+A final summary is also printed, including:
+
+* Total messages
+* Unique user count
+* Breakdown by media type
+* Minimum message ID fetched
+
+## JSON Output
+
+Use `--json` to emit each message as a structured JSON object. This is useful for piping into other programs or saving to file.
 
 ## Python API
 
