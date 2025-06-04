@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import List
+from typing import List, Optional
 
 import click
 from dateutil.relativedelta import relativedelta
@@ -30,6 +30,30 @@ def parse_relative_time_string(time_str: str) -> datetime:
             now -= timedelta(minutes=value)
 
     return now
+
+
+def print_verbose_message(msg: Message):
+    local_date = msg.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+    utc_date = msg.date.strftime('%Y-%m-%d %H:%M:%S')
+    sender = getattr(msg.sender, 'username', 'Unknown')
+    sender_id = getattr(msg.sender, 'id', 'N/A')
+    reply_to = getattr(msg, 'reply_to_msg_id', None)
+    media_type = 'Text'
+    if msg.photo:
+        media_type = 'Photo'
+    elif msg.document:
+        media_type = 'Document'
+    elif msg.video:
+        media_type = 'Video'
+
+    print()
+    print(f"\033[90mID:       \033[0m {msg.id}")
+    print(f"\033[90mDate:     \033[0m {local_date} (local) | {utc_date} UTC")
+    print(f"\033[90mFrom:     \033[0m @{sender} (ID: {sender_id})")
+    print(f"\033[90mType:     \033[0m {media_type}")
+    if reply_to:
+        print(f"\033[90mReply to: \033[0m {reply_to}")
+    print(f"\033[90mText:     \033[0m {msg.raw_text}")
 
 
 @click.group()
@@ -72,14 +96,29 @@ def fetch(channel, min_id, limit, since, verbose):
         raise click.BadParameter(f"Invalid --since value: {since}\n{e}")
 
     tg = TelegramManager()
-    found_min_id: List[None | int] = [None]
+    found_min_id: List[Optional[int]] = [None]
+    message_count = 0
+    user_ids = set()
+    type_counter = {"Text": 0, "Photo": 0, "Document": 0, "Video": 0, "Other": 0}
 
     def message_processor(msg: Message):
+        nonlocal message_count
+        message_count += 1
+        user_ids.add(getattr(msg.sender, 'id', 'N/A'))
+
+        if msg.photo:
+            type_counter["Photo"] += 1
+        elif msg.document:
+            type_counter["Document"] += 1
+        elif msg.video:
+            type_counter["Video"] += 1
+        elif msg.raw_text:
+            type_counter["Text"] += 1
+        else:
+            type_counter["Other"] += 1
+
         if verbose:
-            print(
-                f"\033[90mID:\033[0m {msg.id}  \033[90mDate:\033[0m {msg.date.astimezone().strftime('%Y-%m-%d %H:%M')}  "
-                f"\033[90mFrom:\033[0m @{getattr(msg.sender, 'username', 'Unknown')}  "
-                f"\033[90mText:\033[0m {msg.raw_text}")
+            print_verbose_message(msg)
         else:
             print(msg.message)
 
@@ -98,8 +137,16 @@ def fetch(channel, min_id, limit, since, verbose):
         since_date=since_date,
     )
 
-    if since and verbose:
-        print(f"\n\033[90mFetched messages since {since_date.astimezone().strftime('%Y-%m-%d %H:%M:%S')} (min_id: {found_min_id[0]})\033[0m")
+    if verbose:
+        print("\n\033[1mSummary\033[0m")
+        if since_date:
+            print(f"\033[90mSince:       \033[0m {since_date.astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\033[90mMessages:    \033[0m {message_count}")
+        print(f"\033[90mUsers:       \033[0m {len(user_ids)}")
+        print(f"\033[90mTypes:       \033[0m Text({type_counter['Text']}), Photo({type_counter['Photo']}), "
+              f"Doc({type_counter['Document']}), Video({type_counter['Video']}), Other({type_counter['Other']})")
+        if found_min_id[0] is not None:
+            print(f"\033[90mMin Msg ID:  \033[0m {found_min_id[0]}")
 
 
 @cli.command()

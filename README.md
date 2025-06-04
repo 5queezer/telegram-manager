@@ -53,12 +53,21 @@ The `tm` command provides two primary operations:
 Retrieve historical messages from a channel or group:
 
 ```bash
-tm fetch <channel> [--min-id <id>] [--limit <n>]
+tm fetch <channel> [--min-id <id>] [--limit <n>] [--since <relative-time>] [--verbose]
 ```
 
-**Example:**
+Supported `--since` formats:
+
+* mo : months (e.g. `1mo`)
+* w  : weeks  (e.g. `2w`)
+* d  : days   (e.g. `3d`)
+* h  : hours  (e.g. `4h`)
+* m  : minutes (e.g. `30m`)
+
+You can combine multiple units:
+
 ```bash
-tm fetch @openai --limit 10
+tm fetch @openai --since "1mo 2w 3d 4h 30m" --verbose
 ```
 
 ### Listen for Messages
@@ -69,10 +78,19 @@ Monitor channels for new messages in real-time:
 tm listen <channel>
 ```
 
-**Example:**
+Example:
+
 ```bash
 tm listen "Some Group Chat"
 ```
+
+## Verbose Mode
+
+When `--verbose` is enabled in `fetch`, additional message details are printed:
+
+* ID, date (local + UTC), sender, type, reply info
+* Message text
+* Summary: total messages, user count, message types
 
 ## Python API
 
@@ -81,7 +99,6 @@ tm listen "Some Group Chat"
 ```python
 from telegram_manager import TelegramManager
 
-# Initialize with environment configuration
 tg = TelegramManager()
 ```
 
@@ -105,22 +122,18 @@ tg.listen("@somechannel", message_handler=lambda m: print(f"New: {m.message}"))
 
 TelegramManager accepts multiple channel identifier formats:
 
-- Telegram URLs: `https://t.me/channelname`
-- Username format: `@channelname`
-- Dialog names: `"Channel Display Name"`
+* Telegram URLs: `https://t.me/channelname`
+* Username format: `@channelname`
+* Dialog names: `"Channel Display Name"`
 
 ## Authentication
 
-- Session files are created locally to maintain authentication across sessions
-- First-time usage requires verification code entry
-- Authentication state persists between program runs
+* Session files are created locally to maintain authentication across sessions
+* First-time usage requires verification code entry
+* Authentication state persists between program runs
 
 ## Requirements
 
-- Python 3.7 or higher
-- Valid Telegram API credentials
-- Network connectivity for Telegram API access
-
-## License
-
-MIT License
+* Python 3.7 or higher
+* Valid Telegram API credentials
+* Network connectivity for Telegram API access
