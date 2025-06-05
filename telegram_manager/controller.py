@@ -1,11 +1,15 @@
 import logging
+import asyncio
+import threading
 from datetime import datetime, timezone
-from typing import Callable, Optional, Union, Any
+from typing import Callable, Optional, Union, Any, List
 from urllib.parse import urlparse
 from functools import wraps
+from abc import ABC, abstractmethod
 
 from telethon import events
-from telethon.sync import TelegramClient
+from telethon import TelegramClient
+from telethon.sync import TelegramClient as SyncTelegramClient
 from telethon.tl.custom.dialog import Dialog
 from telethon.tl.types import Message
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, FloodWaitError
@@ -13,174 +17,21 @@ from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, F
 logger = logging.getLogger(__name__)
 
 
-class TelegramManager:
-    def __init__(self, api_id: int, api_hash: str, phone_number: str):
+class BaseTelegramManager(ABC):
+    """Base class containing shared logic for both sync and async implementations."""
+
+    def __init__(self, api_id: int, api_hash: str, phone_number: str, session_name: str = 'session'):
         if not api_id or not api_hash or not phone_number:
             raise ValueError("API credentials and phone number are required")
 
-        self.client = TelegramClient('session', api_id, api_hash)
+        self.api_id = api_id
+        self.api_hash = api_hash
         self.phone_number = phone_number
+        self.session_name = session_name
         self._connected = False
 
-    def connect(self) -> None:
-        """Connect and authorize the Telegram client."""
-        try:
-            if not self.client.is_connected():
-                logger.info("Connecting to Telegram...")
-                self.client.connect()
-
-            if not self.client.is_user_authorized():
-                logger.info("Authorizing the client...")
-                self.client.start(phone=self.phone_number)
-
-            self._connected = True
-
-        except SessionPasswordNeededError:
-            logger.error("Two-factor authentication is enabled. Please provide password.")
-            raise
-        except PhoneCodeInvalidError:
-            logger.error("Invalid phone code provided.")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to connect to Telegram: {e}")
-            raise
-
-    def disconnect(self) -> None:
-        """Disconnect from Telegram."""
-        if self.client.is_connected():
-            self.client.disconnect()
-            self._connected = False
-            logger.info("Disconnected from Telegram")
-
-    @staticmethod
-    def _ensure_connected(method: Callable[..., Any]) -> Callable[..., Any]:
-        """Decorator to ensure client is connected before method execution."""
-
-        @wraps(method)
-        def wrapper(self, *args, **kwargs):
-            if not self._connected or not self.client.is_connected() or not self.client.is_user_authorized():
-                self.connect()
-            return method(self, *args, **kwargs)
-
-        return wrapper
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.disconnect()
-
-    @_ensure_connected
-    def listen(self, chat_identifier: str, message_handler: Callable[[Message], None]) -> None:
-        """Listen for new messages in a chat or channel."""
-        if not chat_identifier:
-            raise ValueError("Chat identifier cannot be empty")
-
-        chat_target = self._resolve_chat_identifier(chat_identifier)
-
-        @self.client.on(events.NewMessage(chats=chat_target))
-        async def event_handler(event):
-            try:
-                if event.message and event.message.text:
-                    message_handler(event.message)
-            except Exception as error:
-                logger.error(f"Error while handling message: {error}")
-
-        logger.info(f"Listening for messages from {chat_target}...")
-        try:
-            self.client.run_until_disconnected()
-        except KeyboardInterrupt:
-            logger.info("Stopping message listener...")
-        except FloodWaitError as e:
-            logger.warning(f"Rate limited. Waiting {e.seconds} seconds...")
-            raise
-
-    @_ensure_connected
-    def fetch_messages(
-            self,
-            chat_identifier: str,
-            message_processor: Optional[Callable[[Message], None]] = None,
-            error_handler: Optional[Callable[[Message, Exception], None]] = None,
-            min_id: Optional[int] = None,
-            limit: Optional[int] = None,
-            since_date: Optional[datetime] = None,
-            search: Optional[str] = None,
-    ) -> Optional[list[Message]]:
-        """
-        Fetch message history from a chat or channel.
-
-        Supports filtering by min_id, date, limit, and search string.
-
-        NOTE: Telegram ignores `min_id` and `offset_date` when `search` is used.
-        This function performs post-filtering manually to support those.
-        """
-        if not chat_identifier:
-            raise ValueError("Chat identifier cannot be empty")
-
-        chat_target = self._resolve_chat_identifier(chat_identifier)
-
-        if search:
-            logger.warning("Telegram ignores min_id and since_date when using search. Filtering manually...")
-
-        try:
-            messages_iter = self.client.iter_messages(
-                chat_target,
-                reverse=True,
-                limit=limit,
-                search=search,
-                min_id=min_id or 0,
-            )
-
-            filtered = []
-            for message in messages_iter:
-                try:
-                    # Manual post-filtering for search queries
-                    if search:
-                        if min_id and message.id <= min_id:
-                            continue
-                        if since_date and self._compare_dates(message.date, since_date) < 0:
-                            continue
-
-                    if message_processor:
-                        message_processor(message)
-                    else:
-                        filtered.append(message)
-
-                except Exception as e:
-                    if error_handler:
-                        error_handler(message, e)
-                    else:
-                        logger.error(f"Error processing message {message.id}: {e}")
-
-            return filtered if not message_processor else None
-
-        except FloodWaitError as e:
-            logger.warning(f"Rate limited while fetching messages. Wait {e.seconds} seconds.")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to fetch messages from {chat_target}: {e}")
-            raise
-
-    @_ensure_connected
-    def _get_chat_dialog(self, chat_name: str) -> Dialog:
-        """Fetch a chat dialog by its name."""
-        if not chat_name:
-            raise ValueError("Chat name cannot be empty")
-
-        try:
-            for dialog in self.client.iter_dialogs():
-                if chat_name.lower().strip() in dialog.name.lower().strip():
-                    return dialog
-            raise ValueError(f"Chat '{chat_name}' not found")
-        except Exception as e:
-            logger.error(f"Failed to find chat '{chat_name}': {e}")
-            raise
-
-    def _resolve_chat_identifier(self, identifier: str) -> Union[str, int]:
-        """Resolve the chat identifier to a valid Telegram chat or channel."""
+    def _resolve_chat_identifier_sync(self, identifier: str) -> Union[str, int]:
+        """Resolve the chat identifier to a valid Telegram chat or channel (sync logic only)."""
         if not identifier:
             raise ValueError("Identifier cannot be empty")
 
@@ -206,14 +57,9 @@ class TelegramManager:
         elif identifier.lstrip('-').isdigit():
             return int(identifier)
 
-        # Handle chat name - resolve to dialog
+        # Handle chat name - this requires client interaction, handled in subclasses
         else:
-            try:
-                dialog = self._get_chat_dialog(identifier)
-                return dialog.entity
-            except ValueError:
-                # If not found as dialog name, try as username
-                return f"@{identifier}"
+            return identifier  # Will be resolved by subclass methods
 
     @staticmethod
     def _compare_dates(message_date: datetime, since_date: datetime) -> int:
@@ -245,3 +91,515 @@ class TelegramManager:
             return 1
         else:
             return 0
+
+    def _should_include_message(self, message: Message, min_id: Optional[int], since_date: Optional[datetime],
+                                search: Optional[str]) -> bool:
+        """Check if message should be included based on filters."""
+        if search:
+            if min_id and message.id <= min_id:
+                return False
+            if since_date and self._compare_dates(message.date, since_date) < 0:
+                return False
+        return True
+
+    @abstractmethod
+    def connect(self):
+        """Connect and authorize the Telegram client."""
+        pass
+
+    @abstractmethod
+    def disconnect(self):
+        """Disconnect from Telegram."""
+        pass
+
+
+class TelegramManager(BaseTelegramManager):
+    """Synchronous Telegram client manager."""
+
+    def __init__(self, api_id: int, api_hash: str, phone_number: str, session_name: str = 'session'):
+        super().__init__(api_id, api_hash, phone_number, session_name)
+        self.client = SyncTelegramClient(self.session_name, api_id, api_hash)
+        self._lock = threading.Lock()
+
+    def connect(self) -> None:
+        """Connect and authorize the Telegram client."""
+        try:
+            if not self.client.is_connected():
+                logger.info("Connecting to Telegram...")
+                self.client.connect()
+
+            if not self.client.is_user_authorized():
+                logger.info("Authorizing the client...")
+                self.client.start(phone=self.phone_number)
+
+            self._connected = True
+
+        except SessionPasswordNeededError:
+            logger.error("Two-factor authentication is enabled. Please provide password.")
+            raise
+        except PhoneCodeInvalidError:
+            logger.error("Invalid phone code provided.")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to connect to Telegram: {e}")
+            raise
+
+    def disconnect(self) -> None:
+        """Disconnect from Telegram."""
+        if self.client.is_connected():
+            self.client.disconnect()
+            self._connected = False
+            logger.info("Disconnected from Telegram")
+
+    def _ensure_connected(method: Callable[..., Any]) -> Callable[..., Any]:
+        """Decorator to ensure client is connected before method execution."""
+
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            with self._lock:
+                if not self._connected or not self.client.is_connected() or not self.client.is_user_authorized():
+                    self.connect()
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
+    def __enter__(self):
+        """Context manager entry."""
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.disconnect()
+
+    @_ensure_connected
+    def _get_chat_dialog(self, chat_name: str) -> Dialog:
+        """Fetch a chat dialog by its name."""
+        if not chat_name:
+            raise ValueError("Chat name cannot be empty")
+
+        try:
+            for dialog in self.client.iter_dialogs():
+                if chat_name.lower().strip() in dialog.name.lower().strip():
+                    return dialog
+            raise ValueError(f"Chat '{chat_name}' not found")
+        except Exception as e:
+            logger.error(f"Failed to find chat '{chat_name}': {e}")
+            raise
+
+    def _resolve_chat_identifier(self, identifier: str) -> Union[str, int]:
+        """Resolve the chat identifier to a valid Telegram chat or channel."""
+        base_result = self._resolve_chat_identifier_sync(identifier)
+
+        # If it's not a simple identifier, try to resolve as chat name
+        if isinstance(base_result, str) and not base_result.startswith('@') and not base_result.lstrip('-').isdigit():
+            try:
+                dialog = self._get_chat_dialog(base_result)
+                return dialog.entity
+            except ValueError:
+                # If not found as dialog name, try as username
+                return f"@{base_result}"
+
+        return base_result
+
+    @_ensure_connected
+    def listen(self, chat_identifier: str, message_handler: Callable[[Message], None]) -> None:
+        """Listen for new messages from a chat or channel."""
+        if not chat_identifier:
+            raise ValueError("Chat identifier cannot be empty")
+
+        chat_target = self._resolve_chat_identifier(chat_identifier)
+
+        def handler(event):
+            try:
+                if event.message and event.message.text:
+                    message_handler(event.message)
+            except Exception as error:
+                logger.error(f"Error while handling message: {error}")
+
+        self.client.add_event_handler(handler, events.NewMessage(chats=chat_target))
+
+        logger.info(f"Listening for messages from {chat_target}...")
+        try:
+            self.client.run_until_disconnected()
+        except KeyboardInterrupt:
+            logger.info("Stopping message listener...")
+        except FloodWaitError as e:
+            logger.warning(f"Rate limited. Waiting {e.seconds} seconds...")
+            raise
+
+    @_ensure_connected
+    def fetch_messages(
+            self,
+            chat_identifier: str,
+            message_processor: Optional[Callable[[Message], None]] = None,
+            error_handler: Optional[Callable[[Message, Exception], None]] = None,
+            min_id: Optional[int] = None,
+            limit: Optional[int] = None,
+            since_date: Optional[datetime] = None,
+            search: Optional[str] = None,
+    ) -> Optional[List[Message]]:
+        """Fetch message history from a chat or channel."""
+        if not chat_identifier:
+            raise ValueError("Chat identifier cannot be empty")
+
+        chat_target = self._resolve_chat_identifier(chat_identifier)
+
+        if search:
+            logger.warning("Telegram ignores min_id and since_date when using search. Filtering manually...")
+
+        try:
+            messages_iter = self.client.iter_messages(
+                chat_target,
+                reverse=True,
+                limit=limit,
+                search=search,
+                min_id=min_id or 0,
+            )
+
+            filtered = []
+            for message in messages_iter:
+                try:
+                    # Manual post-filtering for search queries
+                    if not self._should_include_message(message, min_id, since_date, search):
+                        continue
+
+                    if message_processor:
+                        message_processor(message)
+                    else:
+                        filtered.append(message)
+
+                except Exception as e:
+                    if error_handler:
+                        error_handler(message, e)
+                    else:
+                        logger.error(f"Error processing message {message.id}: {e}")
+
+            return filtered if not message_processor else None
+
+        except FloodWaitError as e:
+            logger.warning(f"Rate limited while fetching messages. Wait {e.seconds} seconds.")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fetch messages from {chat_target}: {e}")
+            raise
+
+    @_ensure_connected
+    def send_message(self, chat_identifier: str, message: str) -> Message:
+        """Send a message to a chat or channel."""
+        if not chat_identifier or not message:
+            raise ValueError("Chat identifier and message cannot be empty")
+
+        chat_target = self._resolve_chat_identifier(chat_identifier)
+
+        try:
+            return self.client.send_message(chat_target, message)
+        except Exception as e:
+            logger.error(f"Failed to send message to {chat_target}: {e}")
+            raise
+
+    @_ensure_connected
+    def get_chat_info(self, chat_identifier: str) -> dict:
+        """Get basic information about a chat or channel."""
+        if not chat_identifier:
+            raise ValueError("Chat identifier cannot be empty")
+
+        chat_target = self._resolve_chat_identifier(chat_identifier)
+
+        try:
+            entity = self.client.get_entity(chat_target)
+            return {
+                'id': entity.id,
+                'title': getattr(entity, 'title', None),
+                'username': getattr(entity, 'username', None),
+                'type': type(entity).__name__,
+                'participants_count': getattr(entity, 'participants_count', None)
+            }
+        except Exception as e:
+            logger.error(f"Failed to get chat info for {chat_target}: {e}")
+            raise
+
+    @_ensure_connected
+    def download_media(self, message: Message, file_path: Optional[str] = None) -> Optional[str]:
+        """Download media from a message."""
+        if not message.media:
+            logger.warning("Message has no media to download")
+            return None
+
+        try:
+            return self.client.download_media(message, file=file_path)
+        except Exception as e:
+            logger.error(f"Failed to download media from message {message.id}: {e}")
+            raise
+
+
+class AsyncTelegramManager(BaseTelegramManager):
+    """Asynchronous Telegram client manager."""
+
+    def __init__(self, api_id: int, api_hash: str, phone_number: str, session_name: str = 'async_session'):
+        super().__init__(api_id, api_hash, phone_number, session_name)
+        self.client = TelegramClient(self.session_name, api_id, api_hash)
+        self._lock = asyncio.Lock()
+
+    async def connect(self) -> None:
+        """Connect and authorize the Telegram client."""
+        try:
+            if not self.client.is_connected():
+                logger.info("Connecting to Telegram...")
+                await self.client.connect()
+
+            if not await self.client.is_user_authorized():
+                logger.info("Authorizing the client...")
+                await self.client.start(phone=self.phone_number)
+
+            self._connected = True
+
+        except SessionPasswordNeededError:
+            logger.error("Two-factor authentication is enabled. Please provide password.")
+            raise
+        except PhoneCodeInvalidError:
+            logger.error("Invalid phone code provided.")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to connect to Telegram: {e}")
+            raise
+
+    async def disconnect(self) -> None:
+        """Disconnect from Telegram."""
+        if self.client.is_connected():
+            await self.client.disconnect()
+            self._connected = False
+            logger.info("Disconnected from Telegram")
+
+    @staticmethod
+    def _ensure_connected(method: Callable[..., Any]) -> Callable[..., Any]:
+        """Decorator to ensure client is connected before method execution."""
+
+        @wraps(method)
+        async def wrapper(self, *args, **kwargs):
+            async with self._lock:
+                if not self._connected or not self.client.is_connected() or not await self.client.is_user_authorized():
+                    await self.connect()
+                return await method(self, *args, **kwargs)
+
+        return wrapper
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.disconnect()
+
+    @_ensure_connected
+    async def _get_chat_dialog(self, chat_name: str) -> Dialog:
+        """Fetch a chat dialog by its name."""
+        if not chat_name:
+            raise ValueError("Chat name cannot be empty")
+
+        try:
+            async for dialog in self.client.iter_dialogs():
+                if chat_name.lower().strip() in dialog.name.lower().strip():
+                    return dialog
+            raise ValueError(f"Chat '{chat_name}' not found")
+        except Exception as e:
+            logger.error(f"Failed to find chat '{chat_name}': {e}")
+            raise
+
+    async def _resolve_chat_identifier(self, identifier: str) -> Union[str, int]:
+        """Resolve the chat identifier to a valid Telegram chat or channel."""
+        base_result = self._resolve_chat_identifier_sync(identifier)
+
+        # If it's not a simple identifier, try to resolve as chat name
+        if isinstance(base_result, str) and not base_result.startswith('@') and not base_result.lstrip('-').isdigit():
+            try:
+                dialog = await self._get_chat_dialog(base_result)
+                return dialog.entity
+            except ValueError:
+                # If not found as dialog name, try as username
+                return f"@{base_result}"
+
+        return base_result
+
+    @_ensure_connected
+    async def listen(self, chat_identifier: str, message_handler: Callable[[Message], Union[None, Any]]) -> None:
+        """Listen for new messages from a chat or channel."""
+        if not chat_identifier:
+            raise ValueError("Chat identifier cannot be empty")
+
+        chat_target = await self._resolve_chat_identifier(chat_identifier)
+
+        async def handler(event):
+            try:
+                if event.message and event.message.text:
+                    if asyncio.iscoroutinefunction(message_handler):
+                        await message_handler(event.message)
+                    else:
+                        message_handler(event.message)
+            except Exception as error:
+                logger.error(f"Error while handling message: {error}")
+
+        self.client.add_event_handler(handler, events.NewMessage(chats=chat_target))
+
+        logger.info(f"Listening for messages from {chat_target}...")
+        try:
+            await self.client.run_until_disconnected()
+        except KeyboardInterrupt:
+            logger.info("Stopping message listener...")
+        except FloodWaitError as e:
+            logger.warning(f"Rate limited. Waiting {e.seconds} seconds...")
+            raise
+
+    @_ensure_connected
+    async def fetch_messages(
+            self,
+            chat_identifier: str,
+            message_processor: Optional[Callable[[Message], Union[None, Any]]] = None,
+            error_handler: Optional[Callable[[Message, Exception], Union[None, Any]]] = None,
+            min_id: Optional[int] = None,
+            limit: Optional[int] = None,
+            since_date: Optional[datetime] = None,
+            search: Optional[str] = None,
+    ) -> Optional[List[Message]]:
+        """Fetch message history from a chat or channel."""
+        if not chat_identifier:
+            raise ValueError("Chat identifier cannot be empty")
+
+        chat_target = await self._resolve_chat_identifier(chat_identifier)
+
+        if search:
+            logger.warning("Telegram ignores min_id and since_date when using search. Filtering manually...")
+
+        try:
+            messages_iter = self.client.iter_messages(
+                chat_target,
+                reverse=True,
+                limit=limit,
+                search=search,
+                min_id=min_id or 0,
+            )
+
+            filtered = []
+            async for message in messages_iter:
+                try:
+                    # Manual post-filtering for search queries
+                    if not self._should_include_message(message, min_id, since_date, search):
+                        continue
+
+                    if message_processor:
+                        if asyncio.iscoroutinefunction(message_processor):
+                            await message_processor(message)
+                        else:
+                            message_processor(message)
+                    else:
+                        filtered.append(message)
+
+                except Exception as e:
+                    if error_handler:
+                        if asyncio.iscoroutinefunction(error_handler):
+                            await error_handler(message, e)
+                        else:
+                            error_handler(message, e)
+                    else:
+                        logger.error(f"Error processing message {message.id}: {e}")
+
+            return filtered if not message_processor else None
+
+        except FloodWaitError as e:
+            logger.warning(f"Rate limited while fetching messages. Wait {e.seconds} seconds.")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fetch messages from {chat_target}: {e}")
+            raise
+
+    @_ensure_connected
+    async def send_message(self, chat_identifier: str, message: str) -> Message:
+        """Send a message to a chat or channel."""
+        if not chat_identifier or not message:
+            raise ValueError("Chat identifier and message cannot be empty")
+
+        chat_target = await self._resolve_chat_identifier(chat_identifier)
+
+        try:
+            return await self.client.send_message(chat_target, message)
+        except Exception as e:
+            logger.error(f"Failed to send message to {chat_target}: {e}")
+            raise
+
+    @_ensure_connected
+    async def get_chat_info(self, chat_identifier: str) -> dict:
+        """Get basic information about a chat or channel."""
+        if not chat_identifier:
+            raise ValueError("Chat identifier cannot be empty")
+
+        chat_target = await self._resolve_chat_identifier(chat_identifier)
+
+        try:
+            entity = await self.client.get_entity(chat_target)
+            return {
+                'id': entity.id,
+                'title': getattr(entity, 'title', None),
+                'username': getattr(entity, 'username', None),
+                'type': type(entity).__name__,
+                'participants_count': getattr(entity, 'participants_count', None)
+            }
+        except Exception as e:
+            logger.error(f"Failed to get chat info for {chat_target}: {e}")
+            raise
+
+    @_ensure_connected
+    async def download_media(self, message: Message, file_path: Optional[str] = None) -> Optional[str]:
+        """Download media from a message."""
+        if not message.media:
+            logger.warning("Message has no media to download")
+            return None
+
+        try:
+            return await self.client.download_media(message, file=file_path)
+        except Exception as e:
+            logger.error(f"Failed to download media from message {message.id}: {e}")
+            raise
+
+
+# Example usage for both sync and async
+def sync_example():
+    """Example of synchronous usage."""
+    manager = TelegramManager(
+        api_id=12345,
+        api_hash="your_api_hash",
+        phone_number="+1234567890"
+    )
+
+    with manager:
+        # Fetch messages
+        messages = manager.fetch_messages("@channel_name", limit=10)
+
+        # Send message
+        manager.send_message("@username", "Hello from sync!")
+
+        # Get chat info
+        info = manager.get_chat_info("@channel_name")
+        print(f"Chat info: {info}")
+
+
+async def async_example():
+    """Example of asynchronous usage."""
+    manager = AsyncTelegramManager(
+        api_id=12345,
+        api_hash="your_api_hash",
+        phone_number="+1234567890"
+    )
+
+    async with manager:
+        # Fetch messages
+        messages = await manager.fetch_messages("@channel_name", limit=10)
+
+        # Send message
+        await manager.send_message("@username", "Hello from async!")
+
+        # Get chat info
+        info = await manager.get_chat_info("@channel_name")
+        print(f"Chat info: {info}")
+
