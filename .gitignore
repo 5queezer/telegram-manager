@@ -196,3 +196,4 @@ cython_debug/
 
 # Telegram session files
 *.session
+*.session-journal

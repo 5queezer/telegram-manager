@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -13,13 +14,13 @@ from telethon.errors import (
     PhoneCodeInvalidError,
     SessionPasswordNeededError,
 )
+from telethon.errors.rpcerrorlist import UserAlreadyParticipantError
 from telethon.sync import (
     TelegramClient as SyncTelegramClient,
 )
 from telethon.tl.custom.dialog import Dialog
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.types import Channel, Chat, Message, User
-from telethon.errors.rpcerrorlist import UserAlreadyParticipantError
 
 logger = logging.getLogger(__name__)
 
@@ -256,8 +257,20 @@ class TelegramManager(BaseTelegramManager):
                             result = self.client(ImportChatInviteRequest(invite_hash))
                             return result.chats[0]
                         except UserAlreadyParticipantError:
-                            # Already in the chat, just get the entity
                             return self.client.get_entity(base_result)
+                        except FloodWaitError as e:
+                            wait_seconds = e.seconds
+                            logger.warning(
+                                f"Rate limited by Telegram. Wait {wait_seconds} seconds before retrying."
+                            )
+                            raise RuntimeError(
+                                f"Telegram rate limit reached. Please wait {wait_seconds} seconds and try again."
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to join or resolve invite link '{base_result}': {e}"
+                            )
+                            raise ValueError("Invite link is invalid or inaccessible")
 
                     except Exception as e:
                         logger.error(
@@ -287,7 +300,9 @@ class TelegramManager(BaseTelegramManager):
 
     @_ensure_connected
     def listen(
-        self, chat_identifier: str, message_handler: Callable[[Message], None]
+        self,
+        chat_identifier: str,
+        message_handler: Callable[[Message], Coroutine[Any, Any, Any]],
     ) -> None:
         """Listen for new messages from a chat or channel."""
         if not chat_identifier:
@@ -295,12 +310,12 @@ class TelegramManager(BaseTelegramManager):
 
         chat_target = self._resolve_chat_identifier(chat_identifier)
 
-        def handler(event):
+        async def handler(event):
             try:
                 if event.message and event.message.text:
                     # Safely call the message handler
                     try:
-                        _result = message_handler(event.message)
+                        message_handler(event.message)
                         # In sync version, we don't need to await anything
                         # Just ensure the handler is called properly
                     except Exception as handler_error:
@@ -576,10 +591,8 @@ class AsyncTelegramManager(BaseTelegramManager):
                 if event.message and event.message.text:
                     try:
                         result = message_handler(event.message)
-                        # Only await if result is actually a coroutine
-                        if asyncio.iscoroutine(result):
+                        if inspect.isawaitable(result):
                             await result
-                        # If result is None or any other value, just continue
                     except Exception as handler_error:
                         logger.error(f"Error in message handler: {handler_error}")
             except Exception as error:
