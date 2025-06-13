@@ -239,7 +239,7 @@ class TelegramManager(BaseTelegramManager):
                 if event.message and event.message.text:
                     # Safely call the message handler
                     try:
-                        result = message_handler(event.message)
+                        _result = message_handler(event.message)
                         # In sync version, we don't need to await anything
                         # Just ensure the handler is called properly
                     except Exception as handler_error:
