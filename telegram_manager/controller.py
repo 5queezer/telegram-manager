@@ -2,7 +2,7 @@ import logging
 import asyncio
 import threading
 from datetime import datetime, timezone
-from typing import Callable, Optional, Union, Any, List
+from typing import Callable, Optional, Union, Any, List, Coroutine
 from urllib.parse import urlparse
 from functools import wraps
 from abc import ABC, abstractmethod
@@ -11,7 +11,7 @@ from telethon import events
 from telethon import TelegramClient
 from telethon.sync import TelegramClient as SyncTelegramClient
 from telethon.tl.custom.dialog import Dialog
-from telethon.tl.types import Message
+from telethon.tl.types import Message, User, Chat, Channel
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, FloodWaitError
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,8 @@ class BaseTelegramManager(ABC):
         self.session_name = session_name
         self._connected = False
 
-    def _resolve_chat_identifier_sync(self, identifier: str) -> Union[str, int]:
+    @staticmethod
+    def _resolve_chat_identifier_sync(identifier: str) -> Union[str, int]:
         """Resolve the chat identifier to a valid Telegram chat or channel (sync logic only)."""
         if not identifier:
             raise ValueError("Identifier cannot be empty")
@@ -44,6 +45,13 @@ class BaseTelegramManager(ABC):
                 path = url.path.strip('/')
                 if not path:
                     raise ValueError("Invalid Telegram URL - no channel/chat specified")
+
+                # Handle invite links (URLs with + in them)
+                if path.startswith('+'):
+                    # Return the full URL for invite links - they need to be resolved differently
+                    return identifier
+
+                # Handle regular username URLs
                 return f"@{path}" if not path.startswith('@') else path
             except Exception as e:
                 logger.error(f"Failed to parse Telegram URL '{identifier}': {e}")
@@ -151,6 +159,7 @@ class TelegramManager(BaseTelegramManager):
             self._connected = False
             logger.info("Disconnected from Telegram")
 
+    @staticmethod
     def _ensure_connected(method: Callable[..., Any]) -> Callable[..., Any]:
         """Decorator to ensure client is connected before method execution."""
 
@@ -187,9 +196,24 @@ class TelegramManager(BaseTelegramManager):
             logger.error(f"Failed to find chat '{chat_name}': {e}")
             raise
 
-    def _resolve_chat_identifier(self, identifier: str) -> Union[str, int]:
+    def _resolve_chat_identifier(self, identifier: str) -> str | Coroutine[
+        Any, Any, User | Chat | Channel | list[User | Chat | Channel]] | int | Any:
         """Resolve the chat identifier to a valid Telegram chat or channel."""
         base_result = self._resolve_chat_identifier_sync(identifier)
+
+        # Handle invite links - they need to be joined first
+        if isinstance(base_result, str) and base_result.startswith(('https://t.me/', 'http://t.me/')):
+            url = urlparse(base_result)
+            path = url.path.strip('/')
+            if path.startswith('+'):
+                try:
+                    # For invite links, try to join the chat first
+                    chat = self.client.get_entity(base_result)
+                    return chat
+                except Exception as e:
+                    logger.error(f"Failed to resolve invite link '{base_result}': {e}")
+                    raise ValueError(
+                        f"Cannot access invite link '{base_result}'. You may need to join the chat first manually.")
 
         # If it's not a simple identifier, try to resolve as chat name
         if isinstance(base_result, str) and not base_result.startswith('@') and not base_result.lstrip('-').isdigit():
@@ -213,7 +237,13 @@ class TelegramManager(BaseTelegramManager):
         def handler(event):
             try:
                 if event.message and event.message.text:
-                    message_handler(event.message)
+                    # Safely call the message handler
+                    try:
+                        result = message_handler(event.message)
+                        # In sync version, we don't need to await anything
+                        # Just ensure the handler is called properly
+                    except Exception as handler_error:
+                        logger.error(f"Error in message handler: {handler_error}")
             except Exception as error:
                 logger.error(f"Error while handling message: {error}")
 
@@ -245,7 +275,7 @@ class TelegramManager(BaseTelegramManager):
 
         chat_target = self._resolve_chat_identifier(chat_identifier)
 
-        if search:
+        if search and (min_id is not None or since_date is not None):
             logger.warning("Telegram ignores min_id and since_date when using search. Filtering manually...")
 
         try:
@@ -285,7 +315,7 @@ class TelegramManager(BaseTelegramManager):
             raise
 
     @_ensure_connected
-    def send_message(self, chat_identifier: str, message: str) -> Message:
+    def send_message(self, chat_identifier: str, message: str) -> Coroutine[Any, Any, Message]:
         """Send a message to a chat or channel."""
         if not chat_identifier or not message:
             raise ValueError("Chat identifier and message cannot be empty")
@@ -309,7 +339,7 @@ class TelegramManager(BaseTelegramManager):
         try:
             entity = self.client.get_entity(chat_target)
             return {
-                'id': entity.id,
+                'id': getattr(entity, 'id', None),
                 'title': getattr(entity, 'title', None),
                 'username': getattr(entity, 'username', None),
                 'type': type(entity).__name__,
@@ -320,7 +350,8 @@ class TelegramManager(BaseTelegramManager):
             raise
 
     @_ensure_connected
-    def download_media(self, message: Message, file_path: Optional[str] = None) -> Optional[str]:
+    def download_media(self, message: Message, file_path: Optional[str] = None) -> Coroutine[
+                                                                                       Any, Any, str | bytes | None] | None:
         """Download media from a message."""
         if not message.media:
             logger.warning("Message has no media to download")
@@ -350,7 +381,7 @@ class AsyncTelegramManager(BaseTelegramManager):
 
             if not await self.client.is_user_authorized():
                 logger.info("Authorizing the client...")
-                await self.client.start(phone=self.phone_number)
+                self.client.start(phone=self.phone_number)
 
             self._connected = True
 
@@ -408,9 +439,24 @@ class AsyncTelegramManager(BaseTelegramManager):
             logger.error(f"Failed to find chat '{chat_name}': {e}")
             raise
 
-    async def _resolve_chat_identifier(self, identifier: str) -> Union[str, int]:
+    async def _resolve_chat_identifier(self, identifier: str) -> str | User | Chat | Channel | list[
+        User | Chat | Channel] | int | Any:
         """Resolve the chat identifier to a valid Telegram chat or channel."""
         base_result = self._resolve_chat_identifier_sync(identifier)
+
+        # Handle invite links - they need to be joined first
+        if isinstance(base_result, str) and base_result.startswith(('https://t.me/', 'http://t.me/')):
+            url = urlparse(base_result)
+            path = url.path.strip('/')
+            if path.startswith('+'):
+                try:
+                    # For invite links, try to join the chat first
+                    chat = await self.client.get_entity(base_result)
+                    return chat
+                except Exception as e:
+                    logger.error(f"Failed to resolve invite link '{base_result}': {e}")
+                    raise ValueError(
+                        f"Cannot access invite link '{base_result}'. You may need to join the chat first manually.")
 
         # If it's not a simple identifier, try to resolve as chat name
         if isinstance(base_result, str) and not base_result.startswith('@') and not base_result.lstrip('-').isdigit():
@@ -434,10 +480,14 @@ class AsyncTelegramManager(BaseTelegramManager):
         async def handler(event):
             try:
                 if event.message and event.message.text:
-                    if asyncio.iscoroutinefunction(message_handler):
-                        await message_handler(event.message)
-                    else:
-                        message_handler(event.message)
+                    try:
+                        result = message_handler(event.message)
+                        # Only await if result is actually a coroutine
+                        if asyncio.iscoroutine(result):
+                            await result
+                        # If result is None or any other value, just continue
+                    except Exception as handler_error:
+                        logger.error(f"Error in message handler: {handler_error}")
             except Exception as error:
                 logger.error(f"Error while handling message: {error}")
 
@@ -489,19 +539,25 @@ class AsyncTelegramManager(BaseTelegramManager):
                         continue
 
                     if message_processor:
-                        if asyncio.iscoroutinefunction(message_processor):
-                            await message_processor(message)
-                        else:
-                            message_processor(message)
+                        try:
+                            result = message_processor(message)
+                            # Only await if result is actually a coroutine
+                            if asyncio.iscoroutine(result):
+                                await result
+                        except Exception as processor_error:
+                            logger.error(f"Error in message processor: {processor_error}")
                     else:
                         filtered.append(message)
 
                 except Exception as e:
                     if error_handler:
-                        if asyncio.iscoroutinefunction(error_handler):
-                            await error_handler(message, e)
-                        else:
-                            error_handler(message, e)
+                        try:
+                            result = error_handler(message, e)
+                            # Only await if result is actually a coroutine
+                            if asyncio.iscoroutine(result):
+                                await result
+                        except Exception as handler_error:
+                            logger.error(f"Error in error handler: {handler_error}")
                     else:
                         logger.error(f"Error processing message {message.id}: {e}")
 
@@ -561,45 +617,3 @@ class AsyncTelegramManager(BaseTelegramManager):
         except Exception as e:
             logger.error(f"Failed to download media from message {message.id}: {e}")
             raise
-
-
-# Example usage for both sync and async
-def sync_example():
-    """Example of synchronous usage."""
-    manager = TelegramManager(
-        api_id=12345,
-        api_hash="your_api_hash",
-        phone_number="+1234567890"
-    )
-
-    with manager:
-        # Fetch messages
-        messages = manager.fetch_messages("@channel_name", limit=10)
-
-        # Send message
-        manager.send_message("@username", "Hello from sync!")
-
-        # Get chat info
-        info = manager.get_chat_info("@channel_name")
-        print(f"Chat info: {info}")
-
-
-async def async_example():
-    """Example of asynchronous usage."""
-    manager = AsyncTelegramManager(
-        api_id=12345,
-        api_hash="your_api_hash",
-        phone_number="+1234567890"
-    )
-
-    async with manager:
-        # Fetch messages
-        messages = await manager.fetch_messages("@channel_name", limit=10)
-
-        # Send message
-        await manager.send_message("@username", "Hello from async!")
-
-        # Get chat info
-        info = await manager.get_chat_info("@channel_name")
-        print(f"Chat info: {info}")
-

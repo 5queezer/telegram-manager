@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -45,11 +46,22 @@ def classify_media_type(msg: Message) -> str:
     return 'Other'
 
 
-def format_message_verbose(msg: Message):
+def format_message_verbose_level1(msg: Message):
+    """Format message with -v: one line with local time and message"""
+    local_date = msg.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+    _sender = getattr(msg, 'sender', {})
+    sender = getattr(_sender, 'username', 'Unknown')
+    text = getattr(msg, 'raw_text', f"[{classify_media_type(msg)}]")
+    print(f"{local_date} @{sender}: {text}")
+
+
+def format_message_verbose_level2(msg: Message):
+    """Format message with -vv: detailed multi-line format"""
     local_date = msg.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
     utc_date = msg.date.strftime('%Y-%m-%d %H:%M:%S')
-    sender = getattr(msg.sender, 'username', 'Unknown')
-    sender_id = getattr(msg.sender, 'id', 'N/A')
+    _sender = getattr(msg, 'sender', {})
+    sender = getattr(_sender, 'username', 'Unknown')
+    sender_id = getattr(_sender, 'id', 'N/A')
     reply_to = getattr(msg, 'reply_to_msg_id', None)
     media_type = classify_media_type(msg)
 
@@ -86,7 +98,7 @@ def cli():
 @click.option('--min-id', type=int, default=None, help="Minimum Telegram message ID to fetch from.")
 @click.option('--limit', type=int, default=None, help="Fetch the last N messages.")
 @click.option('--since', type=str, default=None, help="Fetch messages sent after a relative time like '1w 2d 30m'.")
-@click.option('--verbose', is_flag=True, default=False, help="Verbose output")
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (-v for one-line format, -vv for detailed format)")
 @click.option('--json', 'json_output', is_flag=True, default=False, help="Output messages as JSON.")
 @click.option('--search', type=str, default=None, help="Search string to filter messages containing specific text.")
 def fetch(channel, min_id, limit, since, verbose, json_output, search):
@@ -110,11 +122,20 @@ def fetch(channel, min_id, limit, since, verbose, json_output, search):
 
         Example:
             --since "1mo 2w 3d 4h 30m"
+
+    Verbosity levels:
+    -v          : One-line format with local time and message
+    -vv         : Detailed multi-line format with all metadata
     """
     try:
         since_date = parse_relative_time_string(since) if since else None
     except Exception as e:
         raise click.BadParameter(f"Invalid --since value: {since}\n{e}")
+
+    # Display verbosity level when using -vv
+    if verbose >= 2:
+        print(f"\033[1mVerbosity level: {verbose}\033[0m")
+        print()
 
     tg = TelegramManager()
     found_min_id: List[Optional[int]] = [None]
@@ -132,16 +153,18 @@ def fetch(channel, min_id, limit, since, verbose, json_output, search):
 
         if json_output:
             print(format_message_json(msg))
-        elif verbose:
-            format_message_verbose(msg)
+        elif verbose >= 2:
+            format_message_verbose_level2(msg)
+        elif verbose == 1:
+            format_message_verbose_level1(msg)
         else:
             print(msg.message)
 
         if found_min_id[0] is None or msg.id < found_min_id[0]:
             found_min_id[0] = msg.id
 
-    def error_handler(msg: Message):
-        print(f"Error processing message ID: {msg.id}")
+    def error_handler(msg: Message, _err: Exception):
+        print(f"Error processing message ID: {msg.id}", file=sys.stderr)
 
     tg.fetch_messages(
         chat_identifier=channel,
@@ -153,7 +176,8 @@ def fetch(channel, min_id, limit, since, verbose, json_output, search):
         search=search
     )
 
-    if verbose:
+    # Show summary for verbose modes
+    if verbose == 2:
         print("\n\033[1mSummary\033[0m")
         if since_date:
             print(f"\033[90mSince:       \033[0m {since_date.astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -168,7 +192,8 @@ def fetch(channel, min_id, limit, since, verbose, json_output, search):
 
 @cli.command()
 @click.argument('channel', metavar='<channel>', required=True, type=str)
-def listen(channel):
+@click.option('-v', '--verbose', count=True, help="Increase verbosity (-v for one-line format, -vv for detailed format)")
+def listen(channel, verbose):
     """
     Listen for new messages in a Telegram chat or channel.
 
@@ -176,11 +201,25 @@ def listen(channel):
     - A full URL like 'https://t.me/example'
     - A username like '@example'
     - A plain chat name that matches an existing dialog
+
+    Verbosity levels:
+    -v          : One-line format with local time and message
+    -vv         : Detailed multi-line format with all metadata
     """
+    # Display verbosity level when using -vv
+    if verbose >= 2:
+        print(f"\033[1mVerbosity level: {verbose}\033[0m")
+        print()
+
     tg = TelegramManager()
 
     def on_message(msg: Message):
-        print(f"New message: {msg.message}")
+        if verbose >= 2:
+            format_message_verbose_level2(msg)
+        elif verbose == 1:
+            format_message_verbose_level1(msg)
+        else:
+            print(f"New message: {msg.message}")
 
     tg.listen(channel, message_handler=on_message)
 
