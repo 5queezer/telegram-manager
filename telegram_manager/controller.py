@@ -247,41 +247,31 @@ class TelegramManager(BaseTelegramManager):
             url = urlparse(base_result)
             path = url.path.strip("/")
             if path.startswith("+"):
+                invite_hash = path[1:]  # Remove the leading '+'
+
                 try:
-                    # For invite links, try to join the chat first
-                    # Extract the invite hash (part after the +)
-                    invite_hash = base_result.split("+")[-1]
-
+                    # First, try to get the entity directly (works if already a member)
+                    return self.client.get_entity(base_result)
+                except Exception as get_entity_error:
+                    logger.info(
+                        f"Not yet joined, attempting to import invite: {get_entity_error}"
+                    )
                     try:
-                        try:
-                            result = self.client(ImportChatInviteRequest(invite_hash))
-                            return result.chats[0]
-                        except UserAlreadyParticipantError:
-                            return self.client.get_entity(base_result)
-                        except FloodWaitError as e:
-                            wait_seconds = e.seconds
-                            logger.warning(
-                                f"Rate limited by Telegram. Wait {wait_seconds} seconds before retrying."
-                            )
-                            raise RuntimeError(
-                                f"Telegram rate limit reached. Please wait {wait_seconds} seconds and try again."
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to join or resolve invite link '{base_result}': {e}"
-                            )
-                            raise ValueError("Invite link is invalid or inaccessible")
-
+                        result = self.client(ImportChatInviteRequest(invite_hash))
+                        return result.chats[0]
+                    except FloodWaitError as e:
+                        wait_seconds = e.seconds
+                        logger.warning(
+                            f"Rate limited by Telegram. Wait {wait_seconds} seconds before retrying."
+                        )
+                        raise RuntimeError(
+                            f"Telegram rate limit reached. Please wait {wait_seconds} seconds and try again."
+                        )
                     except Exception as e:
                         logger.error(
                             f"Failed to join or resolve invite link '{base_result}': {e}"
                         )
                         raise ValueError("Invite link is invalid or inaccessible")
-                except Exception as e:
-                    logger.error(f"Failed to resolve invite link '{base_result}': {e}")
-                    raise ValueError(
-                        f"Cannot access invite link '{base_result}'. You may need to join the chat first manually."
-                    )
 
         # If it's not a simple identifier, try to resolve as chat name
         if (
