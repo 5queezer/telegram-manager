@@ -342,7 +342,7 @@ class TelegramManager(BaseTelegramManager):
                 events.MessageDeleted(chats=chat_target),
             )
 
-        logger.info(f"Listening for messages from {chat_target}...")
+        logger.debug(f"Listening for messages from {chat_target}...")
         try:
             self.client.run_until_disconnected()
         except KeyboardInterrupt:
@@ -616,7 +616,7 @@ class AsyncTelegramManager(BaseTelegramManager):
                 events.MessageDeleted(chats=chat_target),
             )
 
-        logger.info(f"Listening for messages from {chat_target}...")
+        logger.debug(f"Listening for messages from {chat_target}...")
         try:
             await self.client.run_until_disconnected()
         except KeyboardInterrupt:
