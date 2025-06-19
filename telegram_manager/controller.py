@@ -45,9 +45,9 @@ async def on_delete(
         if event and event.deleted_ids:
             try:
                 for deleted_id in event.deleted_ids:
-                    delete_handler(deleted_id)
+                    result = delete_handler(deleted_id)
                 if inspect.isawaitable(delete_handler):
-                    await delete_handler(event.deleted_id)
+                    await result
             except Exception as handler_error:
                 logger.error(f"Error in message on_delete: {handler_error}")
     except Exception as handler_error:
