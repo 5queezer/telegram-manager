@@ -293,6 +293,7 @@ class TelegramManager(BaseTelegramManager):
         self,
         chat_identifier: str,
         message_handler: Callable[[Message], Coroutine[Any, Any, Any]],
+        on_delete: Optional[Callable[[Message], Coroutine[Any, Any, Any]]] = None,
     ) -> None:
         """Listen for new messages from a chat or channel."""
         if not chat_identifier:
@@ -314,6 +315,17 @@ class TelegramManager(BaseTelegramManager):
                 logger.error(f"Error while handling message: {error}")
 
         self.client.add_event_handler(handler, events.NewMessage(chats=chat_target))
+
+        if callable(on_delete):
+            self.client.add_event_handler(
+                lambda event: on_delete(event.message),
+                events.MessageDeleted(chats=chat_target),
+            )
+        elif hasattr(on_delete, "handler") and callable(on_delete.handler):
+            self.client.add_event_handler(
+                lambda event: on_delete.handler(event.message),
+                events.MessageDeleted(chats=chat_target),
+            )
 
         logger.info(f"Listening for messages from {chat_target}...")
         try:
@@ -569,6 +581,7 @@ class AsyncTelegramManager(BaseTelegramManager):
         self,
         chat_identifier: str,
         message_handler: Callable[[Message], Union[None, Any]],
+        on_delete: Optional[Callable[[Message], Union[None, Any]]] = None,
     ) -> None:
         """Listen for new messages from a chat or channel."""
         if not chat_identifier:
@@ -589,6 +602,17 @@ class AsyncTelegramManager(BaseTelegramManager):
                 logger.error(f"Error while handling message: {error}")
 
         self.client.add_event_handler(handler, events.NewMessage(chats=chat_target))
+
+        if callable(on_delete):
+            self.client.add_event_handler(
+                lambda event: on_delete(event.message),
+                events.MessageDeleted(chats=chat_target),
+            )
+        elif hasattr(on_delete, "handler") and callable(on_delete.handler):
+            self.client.add_event_handler(
+                lambda event: on_delete.handler(event.message),
+                events.MessageDeleted(chats=chat_target),
+            )
 
         logger.info(f"Listening for messages from {chat_target}...")
         try:
