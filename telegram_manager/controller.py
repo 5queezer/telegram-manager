@@ -14,7 +14,6 @@ from telethon.errors import (
     PhoneCodeInvalidError,
     SessionPasswordNeededError,
 )
-from telethon.errors.rpcerrorlist import UserAlreadyParticipantError
 from telethon.sync import (
     TelegramClient as SyncTelegramClient,
 )
