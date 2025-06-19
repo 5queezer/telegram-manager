@@ -221,7 +221,10 @@ def listen(channel, verbose):
         else:
             print(f"New message: {msg.message}")
 
-    tg.listen(channel, message_handler=on_message)
+    def on_delete(deleted_id: int):
+        print(f"Message ID {deleted_id} was deleted.")
+
+    tg.listen(channel, message_handler=on_message, delete_handler=on_delete)
 
 
 if __name__ == "__main__":

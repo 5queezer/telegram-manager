@@ -24,6 +24,36 @@ from telethon.tl.types import Channel, Chat, Message, User
 
 logger = logging.getLogger(__name__)
 
+async def on_message(
+    event, message_handler: Optional[Callable[[Message], Coroutine[Any, Any, Any]]]
+):
+    try:
+        if event.message and event.message.raw_text:
+            try:
+                result = message_handler(event.message)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as handler_error:
+                logger.error(f"Error in message handler: {handler_error}")
+    except Exception as error:
+        logger.error(f"Error while handling message: {error}")
+
+
+async def on_delete(
+    event, delete_handler: Optional[Callable[[int], Coroutine[Any, Any, Any]]]
+):
+    try:
+        if event and event.deleted_ids:
+            try:
+                for deleted_id in event.deleted_ids:
+                    delete_handler(deleted_id)
+                if inspect.isawaitable(delete_handler):
+                    await delete_handler(event.deleted_id)
+            except Exception as handler_error:
+                logger.error(f"Error in message on_delete: {handler_error}")
+    except Exception as handler_error:
+        logger.error(f"Error in message on_delete: {handler_error}")
+
 
 class BaseTelegramManager(ABC):
     """Base class containing shared logic for both sync and async implementations."""
@@ -292,8 +322,8 @@ class TelegramManager(BaseTelegramManager):
     def listen(
         self,
         chat_identifier: str,
-        message_handler: Callable[[Message], Coroutine[Any, Any, Any]],
-        on_delete: Optional[Callable[[Message], Coroutine[Any, Any, Any]]] = None,
+        message_handler: Optional[Callable[[Message], Coroutine[Any, Any, Any]]] = None,
+        delete_handler: Optional[Callable[[int], Coroutine[Any, Any, Any]]] = None,
     ) -> None:
         """Listen for new messages from a chat or channel."""
         if not chat_identifier:
@@ -301,29 +331,14 @@ class TelegramManager(BaseTelegramManager):
 
         chat_target = self._resolve_chat_identifier(chat_identifier)
 
-        async def handler(event):
-            try:
-                if event.message and event.message.text:
-                    # Safely call the message handler
-                    try:
-                        message_handler(event.message)
-                        # In sync version, we don't need to await anything
-                        # Just ensure the handler is called properly
-                    except Exception as handler_error:
-                        logger.error(f"Error in message handler: {handler_error}")
-            except Exception as error:
-                logger.error(f"Error while handling message: {error}")
-
-        self.client.add_event_handler(handler, events.NewMessage(chats=chat_target))
-
-        if callable(on_delete):
+        if callable(message_handler):
             self.client.add_event_handler(
-                lambda event: on_delete(event.message),
-                events.MessageDeleted(chats=chat_target),
+                lambda event: on_message(event, message_handler),
+                events.NewMessage(chats=chat_target),
             )
-        elif hasattr(on_delete, "handler") and callable(on_delete.handler):
+        if callable(delete_handler):
             self.client.add_event_handler(
-                lambda event: on_delete.handler(event.message),
+                lambda event: on_delete(event, delete_handler),
                 events.MessageDeleted(chats=chat_target),
             )
 
@@ -580,8 +595,8 @@ class AsyncTelegramManager(BaseTelegramManager):
     async def listen(
         self,
         chat_identifier: str,
-        message_handler: Callable[[Message], Union[None, Any]],
-        on_delete: Optional[Callable[[Message], Union[None, Any]]] = None,
+        message_handler: Optional[Callable[[Message], Union[None, Any]]] = None,
+        delete_handler: Optional[Callable[[int], Union[None, Any]]] = None,
     ) -> None:
         """Listen for new messages from a chat or channel."""
         if not chat_identifier:
@@ -589,28 +604,15 @@ class AsyncTelegramManager(BaseTelegramManager):
 
         chat_target = await self._resolve_chat_identifier(chat_identifier)
 
-        async def handler(event):
-            try:
-                if event.message and event.message.text:
-                    try:
-                        result = message_handler(event.message)
-                        if inspect.isawaitable(result):
-                            await result
-                    except Exception as handler_error:
-                        logger.error(f"Error in message handler: {handler_error}")
-            except Exception as error:
-                logger.error(f"Error while handling message: {error}")
-
-        self.client.add_event_handler(handler, events.NewMessage(chats=chat_target))
-
-        if callable(on_delete):
+        if callable(message_handler):
             self.client.add_event_handler(
-                lambda event: on_delete(event.message),
-                events.MessageDeleted(chats=chat_target),
+                lambda event: message_handler(event, on_message),
+                events.NewMessage(chats=chat_target),
             )
-        elif hasattr(on_delete, "handler") and callable(on_delete.handler):
+
+        if callable(delete_handler):
             self.client.add_event_handler(
-                lambda event: on_delete.handler(event.message),
+                lambda event: delete_handler(event, on_delete),
                 events.MessageDeleted(chats=chat_target),
             )
 
